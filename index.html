@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="it">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -46,19 +46,19 @@ details summary{cursor:pointer;font-weight:600}
 <div class="card" id="board"></div>
 
 <div class="card">
-  <h2>Test di oggi</h2>
-  <div class="row" style="margin:0 0 6px"><span class="who">Chi sei?</span>
+  <h2>Today's tests</h2>
+  <div class="row" style="margin:0 0 6px"><span class="who">Who are you?</span>
     <button id="b0" class="who-btn"></button><button id="b1" class="who-btn"></button></div>
-  <div class="hint">Inserisci la band IELTS che ti esce a fine test (da 0 a 9, anche con .5).</div>
+  <div class="hint">Enter the IELTS band you get at the end of each test (0 to 9, half bands allowed).</div>
   <div id="tests"></div>
 </div>
 
 <div class="card">
-  <h2>Storico giornaliero</h2>
+  <h2>Daily history</h2>
   <div id="hist"></div>
 </div>
 
-<div class="card"><p class="hint" style="margin:0">Punti: ogni test vale band × 10. Bonus +10 se completi tutti i test del giorno, +2 extra per ogni giorno di streak consecutivo (max +10).</p></div>
+<div class="card"><p class="hint" style="margin:0">Points: each test is worth band × 10. Bonus +10 for completing all of the day's tests, plus +2 for each extra consecutive day of streak (max +10).</p></div>
 </main>
 
 <script>
@@ -95,7 +95,7 @@ async function remoteSet(day,i,p,band){
     setSync(r.ok);
   }catch(_){ setSync(false) }
 }
-function setSync(ok){ const el=document.getElementById('sync'); if(el) el.textContent = ok?'🟢 sincronizzato':'🔴 offline: riprova'; }
+function setSync(ok){ const el=document.getElementById('sync'); if(el) el.textContent = ok?'🟢 synced':'🔴 offline: will retry'; }
 
 /* ---------- stato ---------- */
 let S;
@@ -145,7 +145,7 @@ function totals(p){
     if(s.full){streak++; pts+=10+Math.min(streak-1,5)*2} else if(d!==today) streak=0;
     total+=pts; best=Math.max(best,streak); s.bonusPts=pts; s.streak=streak;
   });
-  // streak corrente: se oggi non è completo, conta fino a ieri
+  // current streak: if today is incomplete, it counts up to yesterday
   return {total,streak,tests,days};
 }
 const dayPts = (d,p) => { const s=dayStats(d,p); return s; };
@@ -154,13 +154,13 @@ const dayPts = (d,p) => { const s=dayStats(d,p); return s; };
 const $ = id => document.getElementById(id);
 function render(){
   const today = fmt(new Date());
-  $('today').textContent = new Date().toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  $('today').textContent = new Date().toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
   const names=S.names, T=[totals(0),totals(1)];
   const lead = T[0].total===T[1].total ? -1 : (T[0].total>T[1].total?0:1);
   const gap = Math.abs(T[0].total-T[1].total);
   $('board').innerHTML = `<div class="vs">
-    ${[0,1].map(p=>`<div class="pl p${p+1} ${lead===p?'lead':''}"><div class="n">${lead===p?'👑 ':''}${esc(names[p])}</div><div class="p">${T[p].total}</div><div class="s">${T[p].tests} test · 🔥 streak ${T[p].streak}</div></div>`).join('<div style="font-weight:800;color:var(--mute)">VS</div>')}
-  </div><div class="msg">${lead<0? (T[0].total?'Parità perfetta! 🤝':'Si parte: chi segna per primo?') : `${esc(names[lead])} è avanti di ${gap} punti${gap<30?' — si può ancora ribaltare! 😏':' 💪'}`}</div>${todayMsg(today)}`;
+    ${[0,1].map(p=>`<div class="pl p${p+1} ${lead===p?'lead':''}"><div class="n">${lead===p?'👑 ':''}${esc(names[p])}</div><div class="p">${T[p].total}</div><div class="s">${T[p].tests} ${T[p].tests===1?'test':'tests'} · 🔥 streak ${T[p].streak}</div></div>`).join('<div style="font-weight:800;color:var(--mute)">VS</div>')}
+  </div><div class="msg">${lead<0? (T[0].total?'Perfect tie! 🤝':'Game on: who scores first?') : `${esc(names[lead])} leads by ${gap} points${gap<30?' — still anyone\'s game! 😏':' 💪'}`}</div>${todayMsg(today)}`;
 
   const ts = testsFor(today);
   $('tests').innerHTML = ts.map((x,i)=>{
@@ -168,8 +168,8 @@ function render(){
     return `<div class="test"><span class="tag ${x.type}">${x.type}</span> <a href="${x.t[1]}" target="_blank" rel="noopener">${esc(x.t[0])}</a>
       <div class="row">
         <span class="who">${esc(names[S.me])}: <input type="number" min="0" max="9" step="0.5" inputmode="decimal" data-i="${i}" value="${mine?mine.s:''}" placeholder="band">
-          <span class="band">${mine?`${Math.round(mine.s*10)} pt`:''}</span></span>
-        <span class="who">${esc(names[o])}: ${oth?`<b>band ${oth.s}</b> <span class="band">${Math.round(oth.s*10)} pt</span>`:'<span class="band">—</span>'}</span>
+          <span class="band">${mine?`${Math.round(mine.s*10)} pts`:''}</span></span>
+        <span class="who">${esc(names[o])}: ${oth?`<b>band ${oth.s}</b> <span class="band">${Math.round(oth.s*10)} pts</span>`:'<span class="band">—</span>'}</span>
       </div></div>`}).join('');
   document.querySelectorAll('#tests input').forEach(inp=>inp.onchange=()=>{
     const i=+inp.dataset.i, v=inp.value.trim(), k=ek(today,i,S.me);
@@ -180,12 +180,12 @@ function render(){
   });
 
   const dp=[0,1].map(p=>dailyPoints(p));
-  $('hist').innerHTML = `<table><tr><th>Giorno</th><th>${esc(names[0])}</th><th>${esc(names[1])}</th><th>Vince</th></tr>`+
+  $('hist').innerHTML = `<table><tr><th>Day</th><th>${esc(names[0])}</th><th>${esc(names[1])}</th><th>Winner</th></tr>`+
     T[0].days.slice().reverse().slice(0,30).map(d=>{
       const a=dp[0][d], b=dp[1][d];
-      let w='—'; if(d===today && (a.done<a.total||b.done<b.total) && a.pts===b.pts) w='in corso';
-      else if(a.pts>b.pts) w=`<span class="w1">${esc(names[0])}</span>`; else if(b.pts>a.pts) w=`<span class="w2">${esc(names[1])}</span>`; else if(a.done||b.done) w='pari';
-      const cell=x=>`${x.pts} pt <span class="hint">(${x.done}/${x.total}${x.full?' ✅':''})</span>`;
+      let w='—'; if(d===today && (a.done<a.total||b.done<b.total) && a.pts===b.pts) w='in progress';
+      else if(a.pts>b.pts) w=`<span class="w1">${esc(names[0])}</span>`; else if(b.pts>a.pts) w=`<span class="w2">${esc(names[1])}</span>`; else if(a.done||b.done) w='tie';
+      const cell=x=>`${x.pts} pts <span class="hint">(${x.done}/${x.total}${x.full?' ✅':''})</span>`;
       return `<tr><td>${d.slice(5).split('-').reverse().join('/')}</td><td>${cell(a)}</td><td>${cell(b)}</td><td>${w}</td></tr>`}).join('')+'</table>';
 }
 function dailyPoints(p){
@@ -199,15 +199,15 @@ function dailyPoints(p){
 }
 function todayMsg(today){
   const a=dayStats(today,0), b=dayStats(today,1), n=S.names;
-  if(a.done===b.done) return a.done? `<div class="hint" style="text-align:center">Oggi entrambi a ${a.done}/${a.total} test.</div>` : `<div class="hint" style="text-align:center">Oggi nessuno ha ancora fatto test. ⏳</div>`;
+  if(a.done===b.done) return a.done? `<div class="hint" style="text-align:center">Today both are at ${a.done}/${a.total} tests.</div>` : `<div class="hint" style="text-align:center">Nobody has done any tests yet today. ⏳</div>`;
   const [w,l,ws,ls]=a.done>b.done?[0,1,a,b]:[1,0,b,a];
-  return `<div class="hint" style="text-align:center">Oggi ${esc(n[w])} ha fatto ${ws.done}/${ws.total} test, ${esc(n[l])} ${ls.done===0?'nessuno 😴':ls.done+'/'+ls.total}.</div>`;
+  return `<div class="hint" style="text-align:center">Today ${esc(n[w])} has done ${ws.done}/${ws.total} tests, ${esc(n[l])} ${ls.done===0?'none 😴':ls.done+'/'+ls.total}.</div>`;
 }
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 
 /* ---------- chi sono ---------- */
 function setupUI(){
-  [0,1].forEach(i=>{const b=$('b'+i); b.textContent='Sono '+S.names[i]; b.className='who-btn'+(S.me===i?' on'+i:''); b.onclick=()=>{S.me=i;save();setupUI();render()}});
+  [0,1].forEach(i=>{const b=$('b'+i); b.textContent=S.names[i]; b.className='who-btn'+(S.me===i?' on'+i:''); b.onclick=()=>{S.me=i;save();setupUI();render()}});
 }
 setupUI(); render(); remoteLoad();
 setInterval(remoteLoad,20000);
