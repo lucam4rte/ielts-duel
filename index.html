@@ -30,6 +30,7 @@ input[type=text]{padding:6px 8px;border:1px solid var(--line);border-radius:8px;
 textarea{width:100%;height:80px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:12px monospace;padding:6px}
 button,select{padding:8px 12px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);font-size:.95rem;cursor:pointer}
 button.who-btn{font-weight:700}button.on0{background:var(--a);color:#fff;border-color:var(--a)}button.on1{background:var(--b);color:#fff;border-color:var(--b)}
+button.swap{padding:1px 8px;margin-left:6px;font-size:.85rem}
 button.pri{background:var(--a);color:#fff;border-color:var(--a)}
 .band{color:var(--mute);font-size:.85rem}
 table{width:100%;border-collapse:collapse;font-size:.9rem}th,td{padding:6px 4px;text-align:center;border-bottom:1px solid var(--line)}th:first-child,td:first-child{text-align:left}
@@ -72,37 +73,54 @@ const KEY = 'ielts-duello-v1';
    (Project Settings > API: "Project URL" e chiave "anon public").
    Se restano vuote il sito funziona solo in locale. */
 const REMOTE = !!(typeof SUPABASE_URL!=='undefined' && SUPABASE_URL && SUPABASE_ANON_KEY);
+const BASE = REMOTE ? SUPABASE_URL.trim().replace(/\/+$/,'').replace(/\/rest\/v1$/,'').replace(/\/+$/,'') : '';
 const H = REMOTE ? {apikey:SUPABASE_ANON_KEY, 'Content-Type':'application/json'} : {};
 if(REMOTE && SUPABASE_ANON_KEY.startsWith('eyJ')) H.Authorization = 'Bearer '+SUPABASE_ANON_KEY;  // only legacy JWT keys go here
-let lastErr='';
+let lastErr='', swapNote='';
 async function remoteLoad(){
   if(!REMOTE) return;
   try{
-    const r = await fetch(SUPABASE_URL+'/rest/v1/scores?select=day,idx,player,band',{headers:H});
+    const r = await fetch(BASE+'/rest/v1/scores?select=day,idx,player,band',{headers:H});
     if(!r.ok){ lastErr = r.status+' '+(await r.text()).slice(0,120); throw 0; }
     const rows = await r.json(), e = {};
     rows.forEach(x=>e[ek(x.day,x.idx,x.player)]={s:Number(x.band),ts:0});
-    S.entries = e; save(); setSync(true);
+    S.entries = e; swapNote='';
+    try{
+      const r2 = await fetch(BASE+'/rest/v1/swaps?select=day,idx,reroll',{headers:H});
+      if(r2.ok){ const sw={}; (await r2.json()).forEach(x=>sw[x.day+'|'+x.idx]=x.reroll); S.swaps=sw; }
+      else swapNote=' (swap table missing: run supabase-swaps.sql)';
+    }catch(_){ swapNote=' (swaps not synced)' }
+    save(); setSync(true);
     if(!document.activeElement || document.activeElement.tagName!=='INPUT') render();
   }catch(e){ if(!lastErr) lastErr=String(e); setSync(false) }
+}
+async function remoteSwap(day,i,reroll){
+  if(!REMOTE) return;
+  try{
+    const r = await fetch(BASE+'/rest/v1/swaps?on_conflict=day,idx',{method:'POST',headers:{...H,Prefer:'resolution=merge-duplicates'},body:JSON.stringify([{day,idx:i,reroll}])});
+    if(!r.ok){ lastErr='swaps '+r.status; setSync(false); return; }
+    await fetch(BASE+`/rest/v1/scores?day=eq.${day}&idx=eq.${i}`,{method:'DELETE',headers:H});
+    setSync(true);
+  }catch(e){ setSync(false) }
 }
 async function remoteSet(day,i,p,band){
   if(!REMOTE) return;
   try{
     const q = `day=eq.${day}&idx=eq.${i}&player=eq.${p}`;
     const r = band===null
-      ? await fetch(SUPABASE_URL+'/rest/v1/scores?'+q,{method:'DELETE',headers:H})
-      : await fetch(SUPABASE_URL+'/rest/v1/scores?on_conflict=day,idx,player',{method:'POST',headers:{...H,Prefer:'resolution=merge-duplicates'},body:JSON.stringify([{day,idx:i,player:p,band}])});
+      ? await fetch(BASE+'/rest/v1/scores?'+q,{method:'DELETE',headers:H})
+      : await fetch(BASE+'/rest/v1/scores?on_conflict=day,idx,player',{method:'POST',headers:{...H,Prefer:'resolution=merge-duplicates'},body:JSON.stringify([{day,idx:i,player:p,band}])});
     setSync(r.ok);
   }catch(_){ setSync(false) }
 }
-function setSync(ok){ const el=document.getElementById('sync'); if(ok) lastErr=''; if(el) el.textContent = ok?'🟢 synced':'🔴 offline: will retry'+(lastErr?' ('+lastErr+')':''); }
+function setSync(ok){ const el=document.getElementById('sync'); if(ok) lastErr=''; if(el) el.textContent = ok?'🟢 synced'+swapNote:'🔴 offline: will retry'+(lastErr?' ('+lastErr+')':''); }
 
 /* ---------- stato ---------- */
 let S;
 try { S = JSON.parse(localStorage.getItem(KEY)) } catch(e){}
 S = S || {me:0, entries:{}};
 S.names = ['Luca','Vicky'];
+S.swaps = S.swaps || {};
 const save = () => { try{localStorage.setItem(KEY, JSON.stringify(S))}catch(e){} };
 
 /* ---------- date e sorteggio deterministico ---------- */
@@ -113,7 +131,7 @@ function rng(seed){return function(){seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.i
 function shuffle(a,seed){a=a.slice();const r=rng(seed);for(let i=a.length-1;i>0;i--){const j=Math.floor(r()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a}
 const R = shuffle(TESTS.reading, 1234), L = shuffle(TESTS.listening, 5678);
 const cache = {};
-function testsFor(date){
+function baseTests(date){
   if(cache[date]) return cache[date];
   let rp=0, lp=0, last=[];
   const n = Math.max(0, dayNum(date)-dayNum(START));
@@ -127,6 +145,20 @@ function testsFor(date){
     if(d===date) break;
   }
   return cache[date]=last;
+}
+
+// Rerolled slots: replace a broken test with another random one (same result for everyone, via the shared 'swaps' table)
+function testsFor(date){
+  const base=baseTests(date), used=new Set(base.map(x=>x.t[1]));
+  return base.map((x,i)=>{
+    const r=S.swaps[date+'|'+i]||0; let cur=x;
+    for(let k=1;k<=r;k++){
+      const pool=TESTS[x.type].filter(t=>!used.has(t[1])); if(!pool.length) break;
+      const t=pool[Math.floor(rng(dayNum(date)*131+i*17+k)()*pool.length)];
+      used.add(t[1]); cur={type:x.type,t};
+    }
+    return cur;
+  });
 }
 
 /* ---------- punteggi ---------- */
@@ -166,7 +198,7 @@ function render(){
   const ts = testsFor(today);
   $('tests').innerHTML = ts.map((x,i)=>{
     const o = 1-S.me, mine=getE(today,i,S.me), oth=getE(today,i,o);
-    return `<div class="test"><span class="tag ${x.type}">${x.type}</span> <a href="${x.t[1]}" target="_blank" rel="noopener">${esc(x.t[0])}</a>
+    return `<div class="test"><span class="tag ${x.type}">${x.type}</span> <a href="${x.t[1]}" target="_blank" rel="noopener">${esc(x.t[0])}</a><button class="swap" data-i="${i}" title="Link broken? Swap with another random test">🔄 Swap</button>
       <div class="row">
         <span class="who">${esc(names[S.me])}: <input type="number" min="0" max="9" step="0.5" inputmode="decimal" data-i="${i}" value="${mine?mine.s:''}" placeholder="band">
           <span class="band">${mine?`${Math.round(mine.s*10)} pts`:''}</span></span>
@@ -180,6 +212,13 @@ function render(){
     remoteSet(today,i,S.me, v===''?null:S.entries[k].s);
   });
 
+  document.querySelectorAll('#tests .swap').forEach(b=>b.onclick=()=>{
+    const i=+b.dataset.i, had=[0,1].some(p=>getE(today,i,p));
+    if(had && !confirm('Scores already entered for this test will be deleted for both players. Swap anyway?')) return;
+    const k=today+'|'+i; S.swaps[k]=(S.swaps[k]||0)+1;
+    [0,1].forEach(p=>delete S.entries[ek(today,i,p)]);
+    save(); render(); remoteSwap(today,i,S.swaps[k]);
+  });
   const dp=[0,1].map(p=>dailyPoints(p));
   $('hist').innerHTML = `<table><tr><th>Day</th><th>${esc(names[0])}</th><th>${esc(names[1])}</th><th>Winner</th></tr>`+
     T[0].days.slice().reverse().slice(0,30).map(d=>{
