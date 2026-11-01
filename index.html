@@ -31,6 +31,8 @@ textarea{width:100%;height:80px;border:1px solid var(--line);border-radius:8px;b
 button,select{padding:8px 12px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);font-size:.95rem;cursor:pointer}
 button.who-btn{font-weight:700}button.on0{background:var(--a);color:#fff;border-color:var(--a)}button.on1{background:var(--b);color:#fff;border-color:var(--b)}
 button.swap{padding:1px 8px;margin-left:6px;font-size:.85rem}
+button.rm{padding:1px 8px;font-size:.85rem}
+.xrow{border-top:1px solid var(--line);padding:8px 0}.xrow:first-of-type{border-top:0}
 button.pri{background:var(--a);color:#fff;border-color:var(--a)}
 .band{color:var(--mute);font-size:.85rem}
 table{width:100%;border-collapse:collapse;font-size:.9rem}th,td{padding:6px 4px;text-align:center;border-bottom:1px solid var(--line)}th:first-child,td:first-child{text-align:left}
@@ -53,6 +55,8 @@ details summary{cursor:pointer;font-weight:600}
   <div class="hint">Enter the IELTS band you get at the end of each test (0 to 9, half bands allowed).</div>
   <div id="tests"></div>
 </div>
+
+<div class="card" id="extra"></div>
 
 <div class="card">
   <h2>Daily history</h2>
@@ -90,6 +94,11 @@ async function remoteLoad(){
       if(r2.ok){ const sw={}; (await r2.json()).forEach(x=>sw[x.day+'|'+x.idx]=x.reroll); S.swaps=sw; }
       else swapNote=' (swap table missing: run supabase-swaps.sql)';
     }catch(_){ swapNote=' (swaps not synced)' }
+    try{
+      const r3 = await fetch(BASE+'/rest/v1/extras?select=day,player,n,type,title,url,band',{headers:H});
+      if(r3.ok){ S.extras=(await r3.json()).map(x=>({day:x.day,player:x.player,n:x.n,type:x.type,t:[x.title,x.url],band:x.band===null?null:Number(x.band)})); }
+      else swapNote+=' (extras table missing: run supabase-extras.sql)';
+    }catch(_){ swapNote+=' (extras not synced)' }
     save(); setSync(true);
     if(!document.activeElement || document.activeElement.tagName!=='INPUT') render();
   }catch(e){ if(!lastErr) lastErr=String(e); setSync(false) }
@@ -101,6 +110,16 @@ async function remoteSwap(day,i,reroll){
     if(!r.ok){ lastErr='swaps '+r.status; setSync(false); return; }
     await fetch(BASE+`/rest/v1/scores?day=eq.${day}&idx=eq.${i}`,{method:'DELETE',headers:H});
     setSync(true);
+  }catch(e){ setSync(false) }
+}
+const xrow = x => ({day:x.day,player:x.player,n:x.n,type:x.type,title:x.t[0],url:x.t[1],band:x.band});
+async function remoteExtra(x,del){
+  if(!REMOTE) return;
+  try{
+    const r = del
+      ? await fetch(BASE+`/rest/v1/extras?day=eq.${x.day}&player=eq.${x.player}&n=eq.${x.n}`,{method:'DELETE',headers:H})
+      : await fetch(BASE+'/rest/v1/extras?on_conflict=day,player,n',{method:'POST',headers:{...H,Prefer:'resolution=merge-duplicates'},body:JSON.stringify([xrow(x)])});
+    if(!r.ok){ lastErr='extras '+r.status; setSync(false) } else setSync(true);
   }catch(e){ setSync(false) }
 }
 async function remoteSet(day,i,p,band){
@@ -121,6 +140,7 @@ try { S = JSON.parse(localStorage.getItem(KEY)) } catch(e){}
 S = S || {me:0, entries:{}};
 S.names = ['Luca','Vicky'];
 S.swaps = S.swaps || {};
+S.extras = S.extras || [];
 const save = () => { try{localStorage.setItem(KEY, JSON.stringify(S))}catch(e){} };
 
 /* ---------- date e sorteggio deterministico ---------- */
@@ -219,6 +239,7 @@ function render(){
     [0,1].forEach(p=>delete S.entries[ek(today,i,p)]);
     save(); render(); remoteSwap(today,i,S.swaps[k]);
   });
+  renderExtra(today);
   const dp=[0,1].map(p=>dailyPoints(p));
   $('hist').innerHTML = `<table><tr><th>Day</th><th>${esc(names[0])}</th><th>${esc(names[1])}</th><th>Winner</th></tr>`+
     T[0].days.slice().reverse().slice(0,30).map(d=>{
@@ -227,6 +248,42 @@ function render(){
       else if(a.pts>b.pts) w=`<span class="w1">${esc(names[0])}</span>`; else if(b.pts>a.pts) w=`<span class="w2">${esc(names[1])}</span>`; else if(a.done||b.done) w='tie';
       const cell=x=>`${x.pts} pts <span class="hint">(${x.done}/${x.total}${x.full?' ✅':''})</span>`;
       return `<tr><td>${d.slice(5).split('-').reverse().join('/')}</td><td>${cell(a)}</td><td>${cell(b)}</td><td>${w}</td></tr>`}).join('')+'</table>';
+}
+/* ---------- extra practice (not counted in points) ---------- */
+function pickExtra(type,today,me){
+  const used=new Set(testsFor(today).map(x=>x.t[1]));
+  S.extras.filter(x=>x.player===me).forEach(x=>used.add(x.t[1]));
+  let pool=TESTS[type].filter(t=>!used.has(t[1]));
+  if(!pool.length) pool=TESTS[type].filter(t=>!testsFor(today).some(x=>x.t[1]===t[1]));
+  return pool[Math.floor(Math.random()*pool.length)];
+}
+function renderExtra(today){
+  const me=S.me, o=1-me, N=S.names, E=S.extras;
+  const stat=p=>{const all=E.filter(x=>x.player===p), sc=all.filter(x=>x.band!==null&&x.band!==undefined);
+    return `${esc(N[p])}: ${all.length} ${all.length===1?'test':'tests'}`+(sc.length?`, avg band ${(sc.reduce((s,x)=>s+x.band,0)/sc.length).toFixed(1)}`:'')};
+  const mine=E.filter(x=>x.day===today&&x.player===me).sort((a,b)=>a.n-b.n);
+  const oth=E.filter(x=>x.day===today&&x.player===o).sort((a,b)=>a.n-b.n);
+  $('extra').innerHTML=`<h2>Extra practice <span class="hint">· training only, not counted in points</span></h2>
+    <div class="hint" style="margin-bottom:6px">All-time: ${stat(0)} · ${stat(1)}</div>
+    ${mine.map(x=>`<div class="xrow"><span class="tag ${x.type}">${x.type}</span> <a href="${esc(x.t[1])}" target="_blank" rel="noopener">${esc(x.t[0])}</a>
+      <button class="swap" data-n="${x.n}" data-a="swap" title="Link broken? Swap">🔄 Swap</button><button class="rm" data-n="${x.n}" data-a="rm" title="Remove">🗑</button>
+      <div class="row"><span class="who">${esc(N[me])}: <input type="number" min="0" max="9" step="0.5" inputmode="decimal" data-n="${x.n}" value="${x.band===null||x.band===undefined?'':x.band}" placeholder="band"></span></div></div>`).join('')}
+    ${oth.length?`<div class="hint" style="margin-top:8px">${esc(N[o])} today: ${oth.map(x=>`${x.type} “${esc(x.t[0])}” — ${x.band===null||x.band===undefined?'—':'band '+x.band}`).join(' · ')}</div>`:''}
+    <div class="row"><button class="pri" data-add="reading">➕ Reading</button><button class="pri" data-add="listening">➕ Listening</button></div>`;
+  document.querySelectorAll('#extra [data-add]').forEach(b=>b.onclick=()=>{
+    const type=b.dataset.add, t=pickExtra(type,today,me); if(!t) return;
+    const n=Math.max(0,...E.filter(x=>x.day===today&&x.player===me).map(x=>x.n))+1;
+    const x={day:today,player:me,n,type,t,band:null}; S.extras.push(x); save(); render(); remoteExtra(x);
+  });
+  document.querySelectorAll('#extra input').forEach(inp=>inp.onchange=()=>{
+    const x=mine.find(m=>m.n===+inp.dataset.n), v=inp.value.trim().replace(',','.');
+    x.band = v===''?null:Math.max(0,Math.min(9,Math.round(+v*2)/2)); save(); render(); remoteExtra(x);
+  });
+  document.querySelectorAll('#extra button[data-a]').forEach(b=>b.onclick=()=>{
+    const x=mine.find(m=>m.n===+b.dataset.n);
+    if(b.dataset.a==='rm'){ S.extras=S.extras.filter(y=>y!==x); save(); render(); remoteExtra(x,true); }
+    else { const t=pickExtra(x.type,today,me); if(!t) return; x.t=t; x.band=null; save(); render(); remoteExtra(x); }
+  });
 }
 function dailyPoints(p){
   const out={}, today=fmt(new Date()); let streak=0;
